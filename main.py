@@ -97,7 +97,7 @@ def get_color_emoji(num):
 
 def schedule_next_signal():
     """Agenda o próximo sinal para um intervalo aleatório entre 3 e 10 minutos."""
-    wait_seconds = random.randint(10, 30)  # entre 180s (3 min) e 600s (10 min)
+    wait_seconds = random.randint(30, 50)  # entre 180s (3 min) e 600s (10 min)
     STATE["next_signal_time"] = time.time() + wait_seconds
     print(f"[schedule_next_signal] Próximo sinal em {wait_seconds} segundos.")
 
