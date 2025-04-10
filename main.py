@@ -305,8 +305,8 @@ async def run_bot_cycle():
     e entra no loop de leitura dos rounds, processando cada rodada conforme a lógica atual.
     """
     uri = "wss://api-gaming.blaze.bet.br/replication/?EIO=3&transport=websocket"
-    # Configurando ping_interval e ping_timeout para manter a conexão ativa
-    async with connect(uri, ping_interval=20, ping_timeout=20) as ws:
+    # Ajustamos os parâmetros de ping para ajudar a manter a conexão ativa
+    async with connect(uri, ping_interval=10, ping_timeout=30) as ws:
         print("[run_bot_cycle] Conectado à Blaze.")
         await ws.send('420["cmd",{"id":"subscribe","payload":{"room":"double_room_1"}}]')
         print("[run_bot_cycle] Inscrito no canal double_room_1.")
