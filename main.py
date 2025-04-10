@@ -96,7 +96,7 @@ def get_color_emoji(num):
 
 def schedule_next_signal():
     """Agenda o próximo sinal para um intervalo aleatório entre 3 e 10 minutos."""
-    wait_seconds = random.randint(180, 600)  # espera entre 180s (3 min) e 600s (10 min)
+    wait_seconds = random.randint(20, 50)  # espera entre 180s (3 min) e 600s (10 min)
     STATE["next_signal_time"] = time.time() + wait_seconds
     print(f"[schedule_next_signal] Próximo sinal em {wait_seconds} segundos.")
 
@@ -173,16 +173,25 @@ async def handle_consecutive_whites(ws, last_round_id_set):
     enviando mensagens de WIN correspondentes (14x, 28x etc.).
     Ao encerrar, volta para IDLE e mantém a mensagem de SINAL 2.0,
     não enviando loss.
+
+    Melhorado: adiciona timeout para não ficar preso indefinidamente na sequência.
     """
     STATE["in_whites_loop"] = True
     consecutive = 1
+    whites_loop_start = time.time()  # Inicia o contador de timeout para a sequência
+
     while True:
         multiplier = WHITE_MULTIPLIERS.get(consecutive, 14 * consecutive)
         win_msg = f"{multiplier}x do analista!⚪✅"
         await send_telegram_message(win_msg)
         print(f"[handle_consecutive_whites] {consecutive}º branco => {multiplier}x")
 
+        # Se atingir 10 brancos ou timeout de 60 segundos, encerra a sequência.
         if consecutive == 10:
+            print("[handle_consecutive_whites] Máximo de brancos atingido. Encerrando sequência WIN.")
+            break
+        if time.time() - whites_loop_start > 60:
+            print("[handle_consecutive_whites] Timeout na sequência de brancos. Encerrando sequência WIN.")
             break
 
         roll = await get_next_round(ws, last_round_id_set)
@@ -194,7 +203,7 @@ async def handle_consecutive_whites(ws, last_round_id_set):
         else:
             break
 
-    # Não apagamos a mensagem de SINAL 2.0; apenas finalizamos a sequência WIN
+    # Encerra a sequência e reseta o estado
     STATE["phase"] = "IDLE"
     STATE["white_count"] = 0
     STATE["rounds_left"] = 0
