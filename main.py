@@ -95,8 +95,8 @@ def get_color_emoji(num):
     return "❓"
 
 def schedule_next_signal():
-    """Agenda o próximo sinal para 30 segundos a partir de agora."""
-    wait_seconds = 30
+    """Agenda o próximo sinal para um intervalo aleatório entre 3 e 10 minutos."""
+    wait_seconds = random.randint(180, 600)  # espera entre 180s (3 min) e 600s (10 min)
     STATE["next_signal_time"] = time.time() + wait_seconds
     print(f"[schedule_next_signal] Próximo sinal em {wait_seconds} segundos.")
 
@@ -104,6 +104,7 @@ async def flush_old_rounds(ws):
     """
     Descarte incondicional das rodadas antigas imediatamente após a conexão,
     se estivermos em IDLE. Se já estivermos em sinal ativo, não descarta.
+    Agora com timeout para evitar bloqueios infinitos.
     """
     if STATE["phase"] != "IDLE":
         print("[flush_old_rounds] Já em um sinal ativo; não descartando rodadas.")
@@ -113,7 +114,12 @@ async def flush_old_rounds(ws):
     print("[flush_old_rounds] Descartando rodadas antigas...")
     last_round_id = None
     while True:
-        raw = await ws.recv()
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=30)
+        except asyncio.TimeoutError:
+            print("[flush_old_rounds] Timeout atingido. Prosseguindo com flush.")
+            STATE["did_flush"] = True
+            return
         if not isinstance(raw, str):
             continue
         if raw.startswith("42"):
@@ -136,9 +142,15 @@ async def flush_old_rounds(ws):
 async def get_next_round(ws, last_round_id_set):
     """
     Captura a próxima rodada completa, evitando rodadas repetidas (mesmo round_id).
+    Inclui timeout para evitar espera infinita.
     """
     while True:
-        raw = await ws.recv()
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=30)
+        except asyncio.TimeoutError:
+            print("[get_next_round] Timeout na recepção do round. Continuando...")
+            continue
+
         if not isinstance(raw, str):
             continue
         if raw.startswith("42"):
@@ -182,7 +194,7 @@ async def handle_consecutive_whites(ws, last_round_id_set):
         else:
             break
 
-    # NÃO apagamos a mensagem de SINAL 2.0; apenas finalizamos a sequência WIN
+    # Não apagamos a mensagem de SINAL 2.0; apenas finalizamos a sequência WIN
     STATE["phase"] = "IDLE"
     STATE["white_count"] = 0
     STATE["rounds_left"] = 0
@@ -270,8 +282,9 @@ async def maybe_send_signal(ws, last_round_id_set):
 
 def main_loop():
     """
-    Loop principal de reconexão: se a conexão ao WebSocket cair, aguarda 5s e tenta reconectar,
-    mantendo o estado atual.
+    Loop principal de reconexão: se a conexão ao WebSocket cair ou ocorrer algum erro inesperado,
+    aguarda 5 segundos e tenta reconectar, mantendo o estado atual.
+    Isso garante que o bot continue funcionando 24h.
     """
     async def bot_main():
         while True:
