@@ -1,7 +1,9 @@
 import json
 import random
 import time
+import os             # Adicionado para usar os._exit
 import asyncio
+import threading      # Adicionado para agendar o restart via thread
 import telebot
 from websockets.legacy.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -9,9 +11,8 @@ from websockets.exceptions import ConnectionClosed
 # =======================================
 # CONFIGURAÇÕES DO TELEGRAM
 # =======================================
-# Token Apollo e Channel ID atualizados:
-TELEGRAM_TOKEN = '7938613822:AAGRwmj5LjUCC1hOReeCftgEVgvx5BZKQXw'
-CHAT_ID = '-1002579232769'
+TELEGRAM_TOKEN = '8128728008:AAHqEYHrT5Wt8L_qJ_QeSDRvlFjl0llxtoM'
+CHAT_ID = '-1002642605413'
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 # =======================================
@@ -68,13 +69,13 @@ LOSS_OPTIONS = [
 ]
 
 async def send_telegram_message(text):
-    """Envia mensagem ao Telegram de forma assíncrona e retorna o objeto da mensagem."""
+    """Envia uma mensagem ao Telegram de forma assíncrona e retorna o objeto da mensagem."""
     return await asyncio.to_thread(bot.send_message, CHAT_ID, text)
 
 async def delete_signal_message():
     """
-    Deleta a mensagem de SINAL 2.0, se existir.
-    Essa função é usada somente quando ocorre loss (sem brancos).
+    Deleta a mensagem de SINAL 2.0, se existir,
+    usada apenas quando realmente acontece um loss (sem brancos).
     """
     if STATE.get("sinal2_message_id") is not None:
         try:
@@ -97,7 +98,7 @@ def get_color_emoji(num):
 
 def schedule_next_signal():
     """Agenda o próximo sinal para um intervalo aleatório entre 3 e 10 minutos."""
-    wait_seconds = random.randint(180, 600)  # entre 3 e 10 minutos
+    wait_seconds = random.randint(180, 600)  # espera entre 180s (3 min) e 600s (10 min)
     STATE["next_signal_time"] = time.time() + wait_seconds
     print(f"[schedule_next_signal] Próximo sinal em {wait_seconds} segundos.")
 
@@ -105,7 +106,7 @@ async def flush_old_rounds(ws):
     """
     Descarte incondicional das rodadas antigas imediatamente após a conexão,
     se estivermos em IDLE. Se já estivermos em sinal ativo, não descarta.
-    Adiciona tratamento para mensagens de ping ("2"), respondendo com "3" (pong).
+    Agora com timeout para evitar bloqueios infinitos.
     """
     if STATE["phase"] != "IDLE":
         print("[flush_old_rounds] Já em um sinal ativo; não descartando rodadas.")
@@ -121,12 +122,6 @@ async def flush_old_rounds(ws):
             print("[flush_old_rounds] Timeout atingido. Prosseguindo com flush.")
             STATE["did_flush"] = True
             return
-
-        if raw == "2":
-            await ws.send("3")
-            print("[flush_old_rounds] Ping recebido, pong enviado.")
-            continue
-
         if not isinstance(raw, str):
             continue
         if raw.startswith("42"):
@@ -137,6 +132,7 @@ async def flush_old_rounds(ws):
                 payload = data["payload"]
                 if payload["status"] == "complete":
                     current_round_id = payload.get("id")
+                    # Assim que encontrarmos um round_id diferente, descartamos
                     if current_round_id != last_round_id:
                         print("[flush_old_rounds] Rodadas antigas descartadas. Iniciando leitura real.")
                         STATE["did_flush"] = True
@@ -147,19 +143,14 @@ async def flush_old_rounds(ws):
 
 async def get_next_round(ws, last_round_id_set):
     """
-    Captura a próxima rodada completa, evitando rounds repetidos (mesmo round_id).
-    Trata mensagens de ping ("2") respondendo com "3" (pong) e continua a espera.
+    Captura a próxima rodada completa, evitando rodadas repetidas (mesmo round_id).
+    Inclui timeout para evitar espera infinita.
     """
     while True:
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=30)
         except asyncio.TimeoutError:
             print("[get_next_round] Timeout na recepção do round. Continuando...")
-            continue
-
-        if raw == "2":
-            await ws.send("3")
-            print("[get_next_round] Ping recebido, pong enviado.")
             continue
 
         if not isinstance(raw, str):
@@ -180,9 +171,10 @@ async def get_next_round(ws, last_round_id_set):
 
 async def handle_consecutive_whites(ws, last_round_id_set):
     """
-    Quando sai branco (roll == 0), verifica se há brancos consecutivos,
+    Quando sai branco (roll==0), verifica se há brancos consecutivos,
     enviando mensagens de WIN correspondentes (14x, 28x etc.).
-    Ao encerrar, volta para IDLE e mantém a mensagem de SINAL 2.0 (sem enviar loss).
+    Ao encerrar, volta para IDLE e mantém a mensagem de SINAL 2.0,
+    não enviando loss.
     """
     STATE["in_whites_loop"] = True
     consecutive = 1
@@ -204,7 +196,7 @@ async def handle_consecutive_whites(ws, last_round_id_set):
         else:
             break
 
-    # NÃO apagamos a mensagem de SINAL 2.0; apenas finalizamos a sequência de WIN
+    # Não apagamos a mensagem de SINAL 2.0; apenas finalizamos a sequência WIN
     STATE["phase"] = "IDLE"
     STATE["white_count"] = 0
     STATE["rounds_left"] = 0
@@ -213,9 +205,9 @@ async def handle_consecutive_whites(ws, last_round_id_set):
 
 async def process_round(roll, ws, last_round_id_set):
     """
-    Processa cada rodada com base na fase atual:
+    Processa cada rodada com base na fase atual.
       - Se sair branco, chama handle_consecutive_whites (WIN) e não envia loss.
-      - Se não sair branco, decrementa rounds_left. Se chegar a 0 na fase WAITING_2, envia LOSS.
+      - Se não sair branco, decrementa rounds_left. Se chegar a 0 em WAITING_2, envia LOSS.
     """
     if STATE["in_whites_loop"]:
         print("[process_round] Ignorando rodada: sequência de brancos ativa.")
@@ -252,7 +244,7 @@ async def process_round(roll, ws, last_round_id_set):
             return
 
         if STATE["rounds_left"] <= 0:
-            # Se não houve branco (WIN), apagamos o sinal e enviamos loss
+            # Somente se não houve branco (WIN) é que apagamos o sinal e enviamos loss
             await delete_signal_message()
             if random.random() < 0.7:
                 loss_msg = "loss✖️"
@@ -267,9 +259,8 @@ async def process_round(roll, ws, last_round_id_set):
 
 async def maybe_send_signal(ws, last_round_id_set):
     """
-    Se o estado for IDLE e o tempo de enviar sinal tiver chegado,
-    captura a próxima rodada e envia a mensagem de sinal,
-    mudando a fase para WAITING_3.
+    Se o estado for IDLE e o tempo de enviar sinal chegou, captura a próxima rodada
+    e envia a mensagem de sinal, mudando a fase para WAITING_3.
     """
     if STATE["phase"] == "IDLE":
         now = time.time()
@@ -295,7 +286,7 @@ def main_loop():
     """
     Loop principal de reconexão: se a conexão ao WebSocket cair ou ocorrer algum erro inesperado,
     aguarda 5 segundos e tenta reconectar, mantendo o estado atual.
-    Isso ajuda o bot a funcionar continuamente.
+    Isso garante que o bot continue funcionando 24h.
     """
     async def bot_main():
         while True:
@@ -307,15 +298,16 @@ def main_loop():
             except Exception as e:
                 print(f"[bot_main] Erro inesperado: {e}. Tentando reconectar em 5s...")
                 await asyncio.sleep(5)
+
     asyncio.run(bot_main())
 
 async def run_bot_cycle():
     """
     Conecta ao WebSocket, executa o flush de rodadas antigas (se em IDLE)
     e entra no loop de leitura dos rounds, processando cada rodada conforme a lógica atual.
-    Usa ping_interval e ping_timeout para ajudar a manter a conexão ativa.
     """
     uri = "wss://api-gaming.blaze.bet.br/replication/?EIO=3&transport=websocket"
+    # Configurando ping_interval e ping_timeout para manter a conexão ativa
     async with connect(uri, ping_interval=20, ping_timeout=20) as ws:
         print("[run_bot_cycle] Conectado à Blaze.")
         await ws.send('420["cmd",{"id":"subscribe","payload":{"room":"double_room_1"}}]')
@@ -333,6 +325,18 @@ async def run_bot_cycle():
             roll = await get_next_round(ws, last_round_id_set)
             await process_round(roll, ws, last_round_id_set)
 
+# =======================================
+# Agendamento do auto-restart a cada 1 hora
+# =======================================
+def schedule_auto_restart():
+    """Aguarda 1 hora e finaliza o processo para que o Render reinicie o Worker."""
+    time.sleep(3600)  # espera 1 hora
+    os._exit(0)
+
 if __name__ == "__main__":
     print("Bot rodando...")
+
+    # Inicia uma thread daemon que automaticamente finaliza o processo após 1 hora
+    threading.Thread(target=schedule_auto_restart, daemon=True).start()
+
     main_loop()
