@@ -11,8 +11,8 @@ from websockets.exceptions import ConnectionClosed
 # =======================================
 # CONFIGURAÇÕES DO TELEGRAM
 # =======================================
-TELEGRAM_TOKEN = '8128728008:AAHqEYHrT5Wt8L_qJ_QeSDRvlFjl0llxtoM'
-CHAT_ID = '-1002642605413'
+TELEGRAM_TOKEN = '7938613822:AAGRwmj5LjUCC1hOReeCftgEVgvx5BZKQXw'
+CHAT_ID = '-1002579232769'
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 # =======================================
