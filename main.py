@@ -11,7 +11,7 @@ import uuid
 # CONFIGURAÇÕES DO TELEGRAM
 # =======================================
 TELEGRAM_TOKEN = '7938613822:AAGRwmj5LjUCC1hOReeCftgEVgvx5BZKQXw'
-CHAT_ID = '-1002579232769'
+CHAT_ID = '-1002627112314'
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 # =======================================
